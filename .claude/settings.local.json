@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version; python -c \"import tkinter; import winsound; print\\('依赖检查通过'\\)\")"
+    ]
+  }
+}
