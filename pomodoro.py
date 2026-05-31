@@ -1,5 +1,4 @@
 import tkinter as tk   # Python 内置 GUI 框架，用于创建窗口、按钮、画布等控件
-import math             # 数学库（本文件暂未直接用到，可留作扩展）
 import winsound         # Windows 专属音效库，用于播放系统提示音
 
 
@@ -45,6 +44,12 @@ class PomodoroTimer:
     TEXT    = '#E0F8FC'   # 主文字颜色（浅青白）
     SUBTEXT = '#6ABAC6'   # 次级文字颜色（中青灰）
     RING_BG = '#1A4A55'   # 圆环背景轨道颜色
+
+    # ── 按钮和交互常量 ─────────────────────────────────────────────────────
+    INACTIVE_BTN_BG       = '#1A4A55'
+    INACTIVE_BTN_HOVER    = '#2A6070'
+    LONG_BREAK_INTERVAL   = 4          # 每 4 个番茄触发一次长休息
+    MAX_VISIBLE_DOTS      = 8          # 进度圆点最多显示 8 个
 
     # ── 初始化 ───────────────────────────────────────────────────────────────
 
@@ -131,8 +136,8 @@ class PomodoroTimer:
             font=('Segoe UI', 13),
             relief='flat', bd=0, cursor='hand2',
             padx=14, pady=8,
-            bg='#1A4A55', fg=self.TEXT,
-            activebackground='#2A6070',
+            bg=self.INACTIVE_BTN_BG, fg=self.TEXT,
+            activebackground=self.INACTIVE_BTN_HOVER,
             activeforeground=self.TEXT,
             command=self.reset
         )
@@ -215,7 +220,7 @@ class PomodoroTimer:
         c = self._dot_canvas
         c.delete('all')
         color      = self.COLORS['pomodoro']
-        total_dots = 8
+        total_dots = self.MAX_VISIBLE_DOTS
         shown      = min(self.sessions, total_dots)   # 最多点亮 8 个
         spacing    = 20                               # 点间距 20 像素
         # 计算起始 x，使 8 个点在 180px 宽度内居中
@@ -245,21 +250,25 @@ class PomodoroTimer:
                               activebackground=dark, activeforeground='white')
             else:
                 btn.configure(bg='#1A4A55', fg=self.SUBTEXT,
-                              activebackground='#2A6070',
+                              activebackground=self.INACTIVE_BTN_HOVER,
                               activeforeground=self.TEXT)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  计时器核心逻辑
     # ══════════════════════════════════════════════════════════════════════════
 
+    def _cancel_timer(self):
+        """取消已注册的计时器回调。"""
+        if self._after_id:
+            self.root.after_cancel(self._after_id)
+            self._after_id = None
+
     def set_mode(self, mode):
         """
         切换到指定模式（番茄 / 短休 / 长休）。
         会取消正在运行的倒计时，并将时间重置为新模式的默认时长。
         """
-        if self._after_id:
-            self.root.after_cancel(self._after_id)   # 取消已注册的下一次 tick 回调
-            self._after_id = None
+        self._cancel_timer()
         self.is_running = False
         self.mode       = mode
         self.time_left  = self.DURATIONS[mode]
@@ -279,18 +288,14 @@ class PomodoroTimer:
             self._tick()
         else:
             self.start_btn.configure(text='  ▶  继续  ')
-            if self._after_id:
-                self.root.after_cancel(self._after_id)
-                self._after_id = None
+            self._cancel_timer()
 
     def reset(self):
         """
         重置当前模式的倒计时到初始时长，停止运行。
         不切换模式，不清零今日番茄数。
         """
-        if self._after_id:
-            self.root.after_cancel(self._after_id)
-            self._after_id = None
+        self._cancel_timer()
         self.is_running = False
         self.time_left  = self.DURATIONS[self.mode]
         self.start_btn.configure(text='  ▶  开始  ')
@@ -360,8 +365,8 @@ class PomodoroTimer:
             title     = '🎉 番茄完成！'
             body      = f'已完成第 {self.sessions} 个番茄，好好休息一下吧！'
             # 每 4 个番茄触发一次长休息
-            next_mode = 'long_break' if self.sessions % 4 == 0 else 'short_break'
-            next_text = '开始长休息' if self.sessions % 4 == 0 else '开始短休息'
+            next_mode = 'long_break' if self.sessions % self.LONG_BREAK_INTERVAL == 0 else 'short_break'
+            next_text = '开始长休息' if self.sessions % self.LONG_BREAK_INTERVAL == 0 else '开始短休息'
         else:
             title     = '☀️ 休息结束！'
             body      = '准备好了吗？开始下一个番茄时间！'
@@ -406,9 +411,9 @@ class PomodoroTimer:
         # 次要按钮：仅关闭弹窗，不切换模式（用户手动决定下一步）
         tk.Button(btn_row, text='稍后',
                   font=('Segoe UI', 11),
-                  bg='#1A4A55', fg=self.SUBTEXT, relief='flat', cursor='hand2',
+                  bg=self.INACTIVE_BTN_BG, fg=self.SUBTEXT, relief='flat', cursor='hand2',
                   padx=12, pady=6,
-                  activebackground='#2A6070', activeforeground=self.TEXT,
+                  activebackground=self.INACTIVE_BTN_HOVER, activeforeground=self.TEXT,
                   command=popup.destroy).pack(side='left', padx=6)
 
     def _center_popup(self, popup, w, h):
@@ -426,8 +431,7 @@ class PomodoroTimer:
         用户点击窗口关闭按钮时触发。
         先取消所有待执行的 after() 回调，再销毁窗口，防止野指针引发报错。
         """
-        if self._after_id:
-            self.root.after_cancel(self._after_id)
+        self._cancel_timer()
         self.root.destroy()
 
     def run(self):

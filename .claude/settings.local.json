@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(python --version; python -c \"import tkinter; import winsound; print\\('依赖检查通过'\\)\")"
+      "PowerShell(python --version; python -c \"import tkinter; import winsound; print\\('依赖检查通过'\\)\")",
+      "Bash(py -m py_compile pomodoro.py)",
+      "PowerShell(Start-Process py -ArgumentList \"C:\\\\Users\\\\17943\\\\Desktop\\\\first-CC\\\\pomodoro.py\")",
+      "PowerShell(git config *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(ssh-keygen *)",
+      "Bash(ssh-keygen *)",
+      "Bash(ssh *)",
+      "Bash(git *)"
     ]
   }
 }
