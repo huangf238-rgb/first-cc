@@ -9,7 +9,8 @@
       "PowerShell(ssh-keygen *)",
       "Bash(ssh-keygen *)",
       "Bash(ssh *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "PowerShell(Get-Content *)"
     ]
   }
 }
