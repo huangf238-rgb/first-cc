@@ -44,7 +44,7 @@ export async function buildSoeUrl(
     expired: String(ts + 24 * 60 * 60),
     nonce: String(ts),
     voice_id: voiceId,
-    voice_format: "0", // raw PCM, 16 kHz, 16-bit, mono
+    voice_format: "1", // WAV (16 kHz, 16-bit, mono), the format Tencent's own example sends
     text_mode: "0",
     ref_text: p.refText,
     keyword: "",
@@ -89,6 +89,30 @@ async function openSocket(url: string): Promise<WebSocket> {
   }
   ws.accept();
   return ws;
+}
+
+/** Wraps raw 16 kHz mono PCM16 in a 44-byte WAV header. */
+export function pcmToWav(pcm: ArrayBuffer, sampleRate = 16000): ArrayBuffer {
+  const out = new ArrayBuffer(44 + pcm.byteLength);
+  const v = new DataView(out);
+  const ascii = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
+  };
+  ascii(0, "RIFF");
+  v.setUint32(4, 36 + pcm.byteLength, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  v.setUint32(16, 16, true); // fmt chunk size
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true); // byte rate
+  v.setUint16(32, 2, true); // block align
+  v.setUint16(34, 16, true); // bits per sample
+  ascii(36, "data");
+  v.setUint32(40, pcm.byteLength, true);
+  new Uint8Array(out, 44).set(new Uint8Array(pcm));
+  return out;
 }
 
 /**
@@ -142,7 +166,7 @@ export async function runSoe(
           return;
         }
         stage = "sent";
-        ws.send(pcm);
+        ws.send(pcmToWav(pcm));
         ws.send(JSON.stringify({ type: "end" }));
         return;
       }

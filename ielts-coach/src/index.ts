@@ -8,7 +8,9 @@ import { AppError, type Env, type WordScore } from "./types";
 export { Store };
 
 const LIMITS = { assess: 600, feedback: 80, summary: 3 };
-const MAX_AUDIO_BYTES = 34 * 32000; // 34 s of 16 kHz PCM16; the app cuts long answers into ~28 s pieces
+// 32 s of 16 kHz PCM16 (just under 1 MiB, so one recording fits in one WebSocket message);
+// the app cuts long answers into pieces of at most ~28 s.
+const MAX_AUDIO_BYTES = 32 * 32000;
 const MIN_AUDIO_BYTES = 3200; // 0.1 s
 
 function json(data: unknown, status = 200): Response {
