@@ -49,7 +49,7 @@ export async function buildSoeUrl(
     ref_text: p.refText,
     keyword: "",
     eval_mode: String(p.evalMode),
-    score_coeff: p.scoreCoeff.toFixed(1),
+    score_coeff: p.scoreCoeff.toFixed(6), // same "%f" format as the official Go SDK
     server_engine_type: "16k_en",
     sentence_info_enabled: String(p.sentenceInfo ?? 0),
     rec_mode: "1",
