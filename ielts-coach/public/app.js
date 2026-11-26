@@ -591,8 +591,8 @@ function wordDetail(w, label) {
       h(
         "div",
         { class: `phone ${scoreClass(p.s)}` },
-        h("span", { class: "letters", text: p.l || "·" }),
-        h("span", { class: "ipa", text: `/${ipa(p.r)}/` }),
+        h("span", { class: "letters", text: p.l || `/${ipa(p.r || p.p)}/` }),
+        p.l ? h("span", { class: "ipa", text: `/${ipa(p.r || p.p)}/` }) : null,
         h("span", { class: "sc", text: p.s == null ? "—" : `${Math.round(p.s)} 分${p.st && !p.ds ? " · 应重读" : ""}` }),
       ),
     ),
@@ -604,7 +604,7 @@ function wordDetail(w, label) {
   drill.addEventListener("click", () => {
     drillBox.replaceChildren(practiceItem({ text: label.replace(/[^A-Za-z'-]/g, ""), mode: "word", item: `word:${label.toLowerCase()}` }));
   });
-  const heard = w.ph?.some((p) => p.p && p.r && p.p !== p.r)
+  const heard = w.ph?.some((p) => p.p && p.r && p.p.toLowerCase() !== p.r.toLowerCase())
     ? h("p", { class: "tiny muted", text: `听起来像：${w.ph.map((p) => `/${ipa(p.p)}/`).join(" ")}` })
     : null;
   return [
