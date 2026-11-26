@@ -85,6 +85,7 @@ async function openSocket(url: string): Promise<WebSocket> {
   const ws = resp.webSocket;
   if (!ws) {
     const body = await resp.text().catch(() => "");
+    console.error("tencent_handshake_http", resp.status, body.slice(0, 500));
     throw new AppError(502, "tencent_http", `腾讯评测拒绝连接（HTTP ${resp.status}）${body.slice(0, 200)}`);
   }
   ws.accept();
@@ -157,6 +158,7 @@ export async function runSoe(
         return;
       }
       if (msg.code !== 0) {
+        console.error("tencent_reply", JSON.stringify(msg).slice(0, 500));
         finish(() => reject(soeError(msg.code, msg.message || "unknown")));
         return;
       }

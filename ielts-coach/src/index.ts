@@ -22,7 +22,10 @@ function json(data: unknown, status = 200): Response {
 }
 
 function errorResponse(e: unknown): Response {
-  if (e instanceof AppError) return json({ error: { code: e.code, message: e.message } }, e.status);
+  if (e instanceof AppError) {
+    console.error("app_error", e.status, e.code, e.message);
+    return json({ error: { code: e.code, message: e.message } }, e.status);
+  }
   console.error("unhandled", e);
   return json({ error: { code: "internal", message: `服务器出错：${(e as Error)?.message ?? e}` } }, 500);
 }
