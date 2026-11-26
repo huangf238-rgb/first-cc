@@ -928,7 +928,19 @@ function copyCard(title, intro, text) {
       navigator.clipboard.writeText(text).then(() => toast("已复制。打开 Claude App，新建对话，粘贴发送"), fallback);
     } else fallback();
   });
-  return h("section", { class: "card" }, h("h2", { text: title }), h("p", { class: "small muted", text: intro }), btn, ta);
+  // One tap: open a new Claude chat with the prompt already filled in (claude.ai supports ?q=).
+  const open = h("a", { class: "btn primary big", href: `https://claude.ai/new?q=${encodeURIComponent(text)}`, target: "_blank", rel: "noopener", text: "一键在 Claude 里打开" });
+  btn.className = "btn big";
+  btn.textContent = "打不开的话：复制，去 Claude App 粘贴";
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: title }),
+    h("p", { class: "small muted", text: `${intro}点「一键在 Claude 里打开」，提示词会自动填好，你只要点发送。` }),
+    open,
+    btn,
+    ta,
+  );
 }
 
 function speakingPrompt(q, part, merged, wpm, seconds) {

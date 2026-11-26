@@ -161,6 +161,7 @@ main {
   -webkit-tap-highlight-color: transparent;
 }
 .btn:active { transform: translateY(1px); }
+a.btn { text-decoration: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: transparent; }
 .btn.small { padding: 5px 10px; min-height: 32px; font-size: 0.84rem; }
