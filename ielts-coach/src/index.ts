@@ -3,6 +3,7 @@
 import { dailySummary, speakingFeedback, testClaude, type FeedbackInput } from "./claude";
 import { Store, addDays, dayOf } from "./store";
 import { compactResult, EVAL_MODES, mockAssessment, runSoe, type EvalModeName } from "./tencent";
+import { ASSETS } from "./assets.gen";
 import { AppError, type Env, type WordScore } from "./types";
 
 export { Store };
@@ -26,6 +27,12 @@ function errorResponse(e: unknown): Response {
   return json({ error: { code: "internal", message: `服务器出错：${(e as Error)?.message ?? e}` } }, 500);
 }
 
+function serveAsset(pathname: string): Response {
+  const file = ASSETS[pathname === "/" ? "/index.html" : pathname];
+  if (!file) return new Response("Not found", { status: 404 });
+  return new Response(file.body, { headers: { "content-type": file.type, "cache-control": "no-cache" } });
+}
+
 function store(env: Env) {
   return env.STORE.get(env.STORE.idFromName("main"));
 }
@@ -44,7 +51,7 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith("/api/")) return serveAsset(url.pathname);
     try {
       return await handleApi(request, env, ctx, url);
     } catch (e) {
