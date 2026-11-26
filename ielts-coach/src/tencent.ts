@@ -212,8 +212,9 @@ export function compactResult(msg: any): Assessment {
       return out;
     });
     const out: WordScore = {
-      w: String(w.Word ?? ""),
-      ref: String(w.ReferenceWord ?? ""),
+      // Tencent numbers each word ("think_1"); drop the index.
+      w: String(w.Word ?? "").replace(/_\d+$/, ""),
+      ref: String(w.ReferenceWord ?? "").replace(/_\d+$/, ""),
       s: score100(w.PronAccuracy),
       tag: Number(w.MatchTag ?? 0),
       ph,
