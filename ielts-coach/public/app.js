@@ -161,7 +161,35 @@ const TTS = {
     }
     return pool[0];
   },
-  speak(lines, btn, rateMul = 1) {
+  /** iOS: playing a silent <audio> puts the page in "media playback" mode, so speech is heard even with the silent switch on. */
+  unlock() {
+    if (this.silent) {
+      this.silent.play().catch(() => {});
+      return;
+    }
+    if (this.unlocked) return;
+    this.unlocked = true;
+    try {
+      const rate = 8000;
+      const n = rate / 2;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+      const a = new Audio(URL.createObjectURL(new Blob([buf], { type: "audio/wav" })));
+      a.setAttribute("playsinline", "");
+      a.loop = true;
+      a.volume = 0.01;
+      a.play().catch(() => (this.unlocked = false));
+      this.silent = a;
+    } catch {
+      this.unlocked = false;
+    }
+  },
+  speak(lines, btn, rateMul = 1, plainVoice = false) {
+    this.unlock();
     if (!this.ok) {
       toast("这个浏览器不能朗读，请用 Safari 打开");
       return;
@@ -176,12 +204,13 @@ const TTS = {
     this.mark(btn);
     list.forEach((ln, i) => {
       const u = new SpeechSynthesisUtterance(ln.text);
-      const v = this.pick(ln.voice || "A");
+      const v = plainVoice ? null : this.pick(ln.voice || "A");
       if (v) {
         u.voice = v;
         u.lang = v.lang;
       } else u.lang = "en-GB";
       u.rate = clamp((S.prefs.rate || 1) * rateMul, 0.5, 1.6);
+      if (i === 0) u.onstart = () => (started = true);
       if (i === list.length - 1) {
         u.onend = u.onerror = () => {
           if (this.current === btn) this.mark(null);
@@ -189,6 +218,17 @@ const TTS = {
       }
       speechSynthesis.speak(u);
     });
+    // If the chosen voice never starts (not installed on this phone), retry once with the system default voice.
+    let started = false;
+    if (!plainVoice) {
+      setTimeout(() => {
+        if (!started && this.current === btn) {
+          speechSynthesis.cancel();
+          this.current = null;
+          this.speak(lines, btn, rateMul, true);
+        }
+      }, 1500);
+    }
   },
   stop() {
     if (this.ok) speechSynthesis.cancel();
@@ -243,6 +283,7 @@ class Recorder {
     if (!Ctx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error("这个浏览器不能录音。请用 iPhone 自带的 Safari 打开这个网址");
     }
+    if (TTS.silent) TTS.silent.pause(); // free the audio session for the microphone
     // Created inside the tap so iOS lets it start.
     this.ctx = new Ctx();
     const resumed = this.ctx.resume ? this.ctx.resume().catch(() => {}) : Promise.resolve();
