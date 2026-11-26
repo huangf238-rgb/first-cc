@@ -198,6 +198,13 @@ function ratioTo100(v: unknown): number | null {
 /** Turns Tencent's final message into the small shape the app stores and draws. */
 export function compactResult(msg: any): Assessment {
   const r = msg?.result ?? {};
+  // Temporary: log the raw shape of one word so phone fields can be mapped correctly.
+  try {
+    const w0 = Array.isArray(r.Words) ? r.Words.find((w: any) => Array.isArray(w?.PhoneInfos) && w.PhoneInfos.length) ?? r.Words[0] : null;
+    console.log("tencent_word_sample", JSON.stringify(w0).slice(0, 1500));
+  } catch {
+    /* logging only */
+  }
   const words: WordScore[] = (Array.isArray(r.Words) ? r.Words : []).map((w: any): WordScore => {
     const ph: PhoneScore[] = (Array.isArray(w.PhoneInfos) ? w.PhoneInfos : []).map((p: any): PhoneScore => {
       const out: PhoneScore = {
