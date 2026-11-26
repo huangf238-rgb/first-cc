@@ -1146,11 +1146,39 @@ function dailyPrompt(r, digest) {
     "3. 安排明天 45–60 分钟的练习计划，每项注明用 App 的哪个功能（跟读 / 口语 / 听力）。",
     "4. 写 6–8 句针对我最弱的音的新跟读句（雅思常见话题，每句 8–16 个词，注明练哪个音）。",
     "5. 出一套新的雅思 Section 1 听力填空：对话 14–20 行（A 是工作人员，B 是来电者），6–8 道题，每个答案不超过一个单词和/或一个数字，并附答案。",
+    "6. 回答的最后，把以上内容再整理成一个 ```json 代码块（我要导入练习 App），严格用这个格式，字段名不要改：",
+    '{"summary_zh":"今天总结","progress_zh":"进步情况","weak_points":[{"area":"发音","detail_zh":"..."}],"tomorrow_plan":[{"task_zh":"...","minutes":15}],"practice_sentences":[{"text":"English sentence","focus":"/θ/","tip_zh":"..."}],"listening":{"title":"English form title","context_zh":"场景","lines":[{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}],"questions":[{"label":"Surname","answers":["Wallace"],"hint_zh":"陷阱说明"}]},"encouragement_zh":"一句鼓励"}',
     "",
     `连续练习 ${r.streak} 天，今天练习 ${r.todayCount} 次。`,
     "【数据】",
     JSON.stringify(digest),
   ].join("\n");
+}
+
+function importCard() {
+  const ta = h("textarea", { id: "planPaste", rows: 5, placeholder: "把 Claude 的整段回答粘贴到这里（最后要有那段 json 数据）" });
+  const btn = h("button", { type: "button", class: "btn primary big", text: "导入 Claude 的计划" });
+  btn.addEventListener("click", async () => {
+    if (!ta.value.trim()) return toast("先把 Claude 的回答粘贴进来");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/import-plan", { method: "POST", body: { text: ta.value } });
+      S.home = await api("/api/home");
+      toast(`已导入：${r.sentences} 句跟读，${r.questions} 道听力题`);
+      render();
+    } catch (e) {
+      toast(e.message, 6000);
+      btn.disabled = false;
+    }
+  });
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "导入 Claude 的计划" }),
+    h("p", { class: "small muted", text: "Claude 回答完后，长按全选、复制整段回答，粘贴到下面点导入。新的跟读句会出现在「跟读」最上面，新听力在「听力」下拉框里。" }),
+    ta,
+    btn,
+  );
 }
 
 function reportBody(r, digest) {
@@ -1198,7 +1226,8 @@ function reportBody(r, digest) {
     ),
     h("section", { class: "card" }, h("h2", { text: "最近 14 天跟读平均分" }), chart(r.series)),
     digest ? copyCard("让 Claude 分析今天的学习", "点按钮复制今天和过去 7 天的练习数据，粘贴到 Claude App 发送。Claude 会总结进步、找出弱点、排明天的计划，并给你新的跟读句和一套新听力。", dailyPrompt(r, digest)) : null,
-    digest ? null : sum ? summaryCard(sum, gen, genNote) : h("section", { class: "card" }, h("h2", { text: "教练总结" }), h("p", { class: "small muted", text: "还没有总结。今天练完后点下面的按钮，Claude Opus 会分析你的练习，安排明天的计划、推荐跟读句，再出一套新听力。" }), gen, genNote),
+    digest ? importCard() : null,
+    digest ? (sum ? summaryCard(sum, null, null) : null) : sum ? summaryCard(sum, gen, genNote) : h("section", { class: "card" }, h("h2", { text: "教练总结" }), h("p", { class: "small muted", text: "还没有总结。今天练完后点下面的按钮，Claude Opus 会分析你的练习，安排明天的计划、推荐跟读句，再出一套新听力。" }), gen, genNote),
     weakSoundsCard(r.weakSounds),
     weakWordsCard(r.weakWords),
     r.speaking.length
@@ -1283,7 +1312,7 @@ function summaryCard(sum, gen, genNote) {
   return h(
     "section",
     { class: "card" },
-    h("div", { class: "section-title" }, h("h2", { text: "教练总结" }), h("span", { class: "sub", text: `${fmtDay(sum.day)} · Claude Opus 5.5` })),
+    h("div", { class: "section-title" }, h("h2", { text: "教练总结" }), h("span", { class: "sub", text: `${fmtDay(sum.day)} · ${sum.model === "claude-app" ? "从 Claude App 导入" : "Claude Opus 5.5"}` })),
     h("p", { text: s.summary_zh }),
     s.progress_zh ? h("p", { class: "small", text: s.progress_zh }) : null,
     s.weak_points?.length ? h("div", { class: "stack" }, h("h3", { text: "要补的地方" }), s.weak_points.map((w) => h("p", { class: "small" }, h("b", { text: `${w.area}：` }), w.detail_zh))) : null,

@@ -4,7 +4,7 @@ import { dailySummary, speakingFeedback, testClaude, type FeedbackInput } from "
 import { Store, addDays, dayOf } from "./store";
 import { compactResult, EVAL_MODES, mockAssessment, runSoe, type EvalModeName } from "./tencent";
 import { ASSETS } from "./assets.gen";
-import { AppError, type Env, type WordScore } from "./types";
+import { AppError, type DailySummary, type Env, type WordScore } from "./types";
 
 export { Store };
 
@@ -295,6 +295,14 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
     return json(result);
   }
 
+  if (route === "POST /api/import-plan") {
+    const body = await readJson(req);
+    const summary = parsePastedPlan(str(body.text, 60000));
+    const day = await s.today();
+    await s.saveSummary(day, summary, "claude-app", "paste");
+    return json({ ok: true, day, sentences: summary.practice_sentences.length, questions: summary.listening.questions.length });
+  }
+
   if (route === "GET /api/digest") {
     return json(await s.digest(await s.today()));
   }
@@ -325,4 +333,50 @@ async function runDailySummary(env: Env, source: "cron" | "manual") {
   const { summary, model } = await dailySummary(secrets?.anthropicKey ?? "", digest, mock);
   await s.saveSummary(day, summary, model, source);
   return { day, model, summary, previousDay: addDays(day, -1) };
+}
+
+/** Reads the JSON block Claude was asked to append, and fills in anything missing. */
+function parsePastedPlan(text: string): DailySummary {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/g);
+  const candidates = [...(fenced ?? []).map((b) => b.replace(/```(?:json)?/g, "").trim()).reverse()];
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  let data: any = null;
+  for (const c of candidates) {
+    try {
+      data = JSON.parse(c);
+      if (data && typeof data === "object") break;
+    } catch {
+      data = null;
+    }
+  }
+  if (!data) throw new AppError(400, "no_json", "没找到 Claude 回答最后那段数据（{ 开头 } 结尾）。请把 Claude 的整段回答都复制过来");
+  const arr = (v: unknown) => (Array.isArray(v) ? v : []);
+  const t = (v: unknown, max = 2000) => (typeof v === "string" ? v.slice(0, max) : "");
+  const L = data.listening ?? {};
+  const summary: DailySummary = {
+    summary_zh: t(data.summary_zh),
+    progress_zh: t(data.progress_zh),
+    weak_points: arr(data.weak_points).slice(0, 6).map((w: any) => ({ area: t(w?.area, 40), detail_zh: t(w?.detail_zh, 500) })),
+    tomorrow_plan: arr(data.tomorrow_plan).slice(0, 8).map((p: any) => ({ task_zh: t(p?.task_zh, 300), minutes: Number(p?.minutes) || 10 })),
+    practice_sentences: arr(data.practice_sentences)
+      .slice(0, 12)
+      .map((p: any) => ({ text: t(p?.text, 300), focus: t(p?.focus, 60), tip_zh: t(p?.tip_zh, 300) }))
+      .filter((p) => /[A-Za-z]/.test(p.text)),
+    listening: {
+      title: t(L.title, 200) || "Coach listening",
+      context_zh: t(L.context_zh, 200),
+      lines: arr(L.lines).slice(0, 40).map((l: any) => ({ speaker: (l?.speaker === "B" ? "B" : "A") as "A" | "B", text: t(l?.text, 500) })).filter((l) => l.text),
+      questions: arr(L.questions)
+        .slice(0, 12)
+        .map((q: any) => ({ label: t(q?.label, 120), answers: arr(q?.answers).map((a: unknown) => t(a, 80)).filter(Boolean), hint_zh: t(q?.hint_zh, 200) }))
+        .filter((q) => q.label && q.answers.length),
+    },
+    encouragement_zh: t(data.encouragement_zh, 300),
+  };
+  if (!summary.practice_sentences.length && !summary.listening.lines.length && !summary.tomorrow_plan.length) {
+    throw new AppError(400, "empty_plan", "这段数据里没有跟读句、听力或计划，请确认复制的是 Claude 的完整回答");
+  }
+  return summary;
 }
