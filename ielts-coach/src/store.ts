@@ -100,7 +100,7 @@ export class Store extends DurableObject<Env> {
   }
 
   isConfigured(): boolean {
-    return !!(this.conf("pass_hash") && this.conf("tencent_appid") && this.conf("tencent_sid") && this.conf("tencent_skey") && this.conf("anthropic_key"));
+    return !!(this.conf("pass_hash") && this.conf("tencent_appid") && this.conf("tencent_sid") && this.conf("tencent_skey"));
   }
 
   hasPasscode(): boolean {
@@ -130,8 +130,8 @@ export class Store extends DurableObject<Env> {
     const appId = this.conf("tencent_appid");
     const secretId = this.conf("tencent_sid");
     const secretKey = this.conf("tencent_skey");
-    const anthropicKey = this.conf("anthropic_key");
-    if (!appId || !secretId || !secretKey || !anthropicKey) return null;
+    const anthropicKey = this.conf("anthropic_key") ?? "";
+    if (!appId || !secretId || !secretKey) return null;
     return { tencent: { appId, secretId, secretKey }, anthropicKey };
   }
 

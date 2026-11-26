@@ -858,7 +858,7 @@ async function processAnswer(res, q, part, out) {
     return;
   }
   step2.className = "doing";
-  step2.textContent = "② Claude 点评中（约 10–20 秒）…";
+  step2.textContent = S.home?.claudeEnabled ? "② Claude 点评中（约 10–20 秒）…" : "② 保存记录、生成给 Claude 的提示词…";
   try {
     const fb = await api("/api/feedback", {
       method: "POST",
@@ -873,7 +873,11 @@ async function processAnswer(res, q, part, out) {
       },
     });
     bumpToday();
-    out.replaceChildren(renderFeedback(fb.feedback, merged, fb.wordsPerMinute, res.seconds));
+    out.replaceChildren(
+      fb.feedback
+        ? renderFeedback(fb.feedback, merged, fb.wordsPerMinute, res.seconds)
+        : renderCopyFeedback(q, part, merged, fb.wordsPerMinute, res.seconds),
+    );
   } catch (e) {
     step2.className = "warn";
     step2.textContent = `② Claude 点评失败：${e.message}`;
@@ -907,6 +911,63 @@ function mergeResults(results, durations) {
       .trim(),
     seconds: total,
   };
+}
+
+/** A card with a ready-made prompt and a copy button, for pasting into the Claude app. */
+function copyCard(title, intro, text) {
+  const ta = h("textarea", { readonly: true, rows: 6, "aria-label": "提示词" });
+  ta.value = text;
+  const btn = h("button", { type: "button", class: "btn primary big", text: "复制，去 Claude App 粘贴" });
+  btn.addEventListener("click", () => {
+    const fallback = () => {
+      ta.focus();
+      ta.select();
+      toast("请长按上面的文字，选「全选」再「拷贝」");
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => toast("已复制。打开 Claude App，新建对话，粘贴发送"), fallback);
+    } else fallback();
+  });
+  return h("section", { class: "card" }, h("h2", { text: title }), h("p", { class: "small muted", text: intro }), btn, ta);
+}
+
+function speakingPrompt(q, part, merged, wpm, seconds) {
+  const low = (merged.words || [])
+    .filter((w) => typeof w.s === "number" && w.s < 70 && (w.w || w.ref))
+    .sort((a, b) => a.s - b.s)
+    .slice(0, 8)
+    .map((w) => `${w.w || w.ref}（${Math.round(w.s)}分）`)
+    .join("、");
+  return [
+    "你是经验丰富的雅思口语考官和我的老师。我是中国学生，四级水平（约雅思 5–5.5），目标总分 6.5、口语 6。",
+    "请点评我下面这次口语回答：",
+    "1. 按雅思口语四项评分标准估分（流利连贯、词汇、语法、发音），用半分制，严格一点；发音只能根据腾讯发音分估计。",
+    "2. 用中文指出最重要的 3–5 处修改：原句 → 改后，并说明原因。",
+    "3. 对低分单词给出口型和舌位的发音提示。",
+    "4. 给一个保留我观点的 7 分示范回答，并列出 3–5 个值得背的表达（英文 + 中文意思）。",
+    "",
+    `【题目】${part}：${q.q}${q.cue ? `（You should say: ${q.cue.join("; ")}）` : ""}`,
+    `【我的回答】（语音识别转写，没有标点，可能有个别识别错误，请别把明显的识别错误算成我的错）`,
+    merged.transcript,
+    "",
+    `【数据】时长 ${Math.round(seconds)} 秒，约 ${wpm} 词/分钟；腾讯发音分 ${round(merged.score)}（准确度 ${round(merged.accuracy)}，流利度 ${round(merged.fluency)}，满分 100）`,
+    low ? `【低分单词】${low}` : "",
+  ]
+    .filter((x) => x !== "")
+    .join("\n");
+}
+
+function renderCopyFeedback(q, part, merged, wpm, seconds) {
+  return h(
+    "div",
+    { class: "stack", style: "gap:14px" },
+    h("section", { class: "card" }, h("h2", { text: "你说的内容（机器识别，可能有误）" }), renderAssessment(merged, { title: "腾讯发音分" })),
+    copyCard(
+      "让 Claude 点评这次回答",
+      "这次回答和发音分已经存进学习记录。点下面的按钮复制提示词，粘贴到 Claude App 发送，Claude 会估分、改错、给 7 分示范。",
+      speakingPrompt(q, part, merged, wpm, seconds),
+    ),
+  );
 }
 
 function renderFeedback(fb, merged, wpm, seconds) {
@@ -1054,16 +1115,33 @@ function viewListen() {
 
 function viewReport() {
   const root = h("div", { class: "stack", style: "gap:14px" }, h("p", { class: "loading", text: "正在读取学习记录…" }));
-  api("/api/report")
-    .then((r) => {
+  Promise.all([api("/api/report"), S.home?.claudeEnabled ? null : api("/api/digest")])
+    .then(([r, digest]) => {
       S.report = r;
-      root.replaceChildren(...clean(reportBody(r)));
+      root.replaceChildren(...clean(reportBody(r, digest)));
     })
     .catch((e) => root.replaceChildren(h("p", { class: "warn", text: e.message })));
   return root;
 }
 
-function reportBody(r) {
+function dailyPrompt(r, digest) {
+  return [
+    "你是我的雅思私人教练。我是中国学生，四级水平（约雅思 5–5.5），目标总分 6.5（听力 7、口语 6）。",
+    "下面是我在练习 App 里今天和过去 7 天的数据（JSON）。说明：跟读的分数来自腾讯发音评测（0–100，按单词和音素打分，音素后面括号里是对应字母）；口语有题目、语音识别转写和腾讯发音分；听力是雅思 Section 1 填空的得分和错题。",
+    "请用中文帮我：",
+    "1. 总结今天练了什么，和前几天比有没有进步（用数据说话，不要编数字）。",
+    "2. 找出 2–4 个最该补的弱点（具体到音、单词、语法点或听力陷阱）。",
+    "3. 安排明天 45–60 分钟的练习计划，每项注明用 App 的哪个功能（跟读 / 口语 / 听力）。",
+    "4. 写 6–8 句针对我最弱的音的新跟读句（雅思常见话题，每句 8–16 个词，注明练哪个音）。",
+    "5. 出一套新的雅思 Section 1 听力填空：对话 14–20 行（A 是工作人员，B 是来电者），6–8 道题，每个答案不超过一个单词和/或一个数字，并附答案。",
+    "",
+    `连续练习 ${r.streak} 天，今天练习 ${r.todayCount} 次。`,
+    "【数据】",
+    JSON.stringify(digest),
+  ].join("\n");
+}
+
+function reportBody(r, digest) {
   const last7 = r.series.slice(-7).filter((d) => d.shadowAvg != null);
   const shadow7 = last7.length ? last7.reduce((a, d) => a + d.shadowAvg * d.shadowN, 0) / last7.reduce((a, d) => a + d.shadowN, 0) : null;
   const sp = r.speaking.slice(0, 5);
@@ -1107,7 +1185,8 @@ function reportBody(r) {
       tile("口语近 5 次平均", spAvg == null ? "—" : spAvg.toFixed(1), "雅思分数估计"),
     ),
     h("section", { class: "card" }, h("h2", { text: "最近 14 天跟读平均分" }), chart(r.series)),
-    sum ? summaryCard(sum, gen, genNote) : h("section", { class: "card" }, h("h2", { text: "教练总结" }), h("p", { class: "small muted", text: "还没有总结。今天练完后点下面的按钮，Claude Opus 会分析你的练习，安排明天的计划、推荐跟读句，再出一套新听力。" }), gen, genNote),
+    digest ? copyCard("让 Claude 分析今天的学习", "点按钮复制今天和过去 7 天的练习数据，粘贴到 Claude App 发送。Claude 会总结进步、找出弱点、排明天的计划，并给你新的跟读句和一套新听力。", dailyPrompt(r, digest)) : null,
+    digest ? null : sum ? summaryCard(sum, gen, genNote) : h("section", { class: "card" }, h("h2", { text: "教练总结" }), h("p", { class: "small muted", text: "还没有总结。今天练完后点下面的按钮，Claude Opus 会分析你的练习，安排明天的计划、推荐跟读句，再出一套新听力。" }), gen, genNote),
     weakSoundsCard(r.weakSounds),
     weakWordsCard(r.weakWords),
     r.speaking.length
@@ -1454,7 +1533,7 @@ function viewSetup(status) {
       field("确认口令", f.pass2),
     ),
     h("section", { class: "card" }, h("h3", { text: "腾讯云 口语评测" }), field("AppID", f.appId), field("SecretId", f.sid, "腾讯云控制台 › 访问管理 › API 密钥"), field("SecretKey", f.skey)),
-    h("section", { class: "card" }, h("h3", { text: "Claude" }), field("Claude API 密钥", f.ak, "platform.claude.com › API Keys")),
+    h("section", { class: "card" }, h("h3", { text: "Claude（可以不填）" }), field("Claude API 密钥", f.ak, "不填也能用：口语点评和每日总结会变成「复制给 Claude App」，用你的 Claude 会员分析")),
     submit,
     msg,
   );

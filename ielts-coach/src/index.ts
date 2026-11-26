@@ -72,6 +72,7 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
   const s = store(env);
   const route = `${req.method} ${url.pathname}`;
   const mock = env.MOCK === "1";
+  const mockTencent = mock || env.MOCK === "tencent"; // "tencent": fake scores only, Claude path stays real
 
   // ----- open routes -----
   if (route === "GET /api/status") {
@@ -104,7 +105,6 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
         !fields.tencentAppId && "腾讯云 AppID",
         !fields.tencentSecretId && "SecretId",
         !fields.tencentSecretKey && "SecretKey",
-        !fields.anthropicKey && "Claude API 密钥",
       ].filter(Boolean);
       if (missing.length) throw new AppError(400, "missing", `还缺：${missing.join("、")}`);
     }
@@ -125,14 +125,16 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
   }
 
   if (route === "GET /api/home") {
-    const [settings, latest, sets, keys, todayCount] = await Promise.all([
+    const [settings, latest, sets, keys, todayCount, secrets] = await Promise.all([
       s.settings(),
       s.latestSummary(),
       s.listeningSets(10),
       s.maskedSecrets(),
       s.countToday(),
+      s.secrets(),
     ]);
-    return json({ settings, latestSummary: latest, listeningSets: sets, keys, todayCount, mock });
+    const claudeEnabled = mock || !!secrets?.anthropicKey;
+    return json({ settings, latestSummary: latest, listeningSets: sets, keys, todayCount, mock, claudeEnabled });
   }
 
   if (route === "POST /api/settings") {
@@ -153,8 +155,11 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
       runSoe(secrets.tencent, null, { refText: "hello", evalMode: EVAL_MODES.word, scoreCoeff: 3 }, { handshakeOnly: true, timeoutMs: 15_000 })
         .then(() => (result.tencent = { ok: true, message: "腾讯云口语评测：连接成功，密钥有效" }))
         .catch((e) => (result.tencent = { ok: false, message: (e as Error).message })),
-      testClaude(secrets.anthropicKey)
-        .then((name) => (result.claude = { ok: true, message: `Claude：密钥有效（${name}）` }))
+      (secrets.anthropicKey ? testClaude(secrets.anthropicKey) : Promise.resolve(null))
+        .then((name) =>
+          (result.claude = name
+            ? { ok: true, message: `Claude：密钥有效（${name}）` }
+            : { ok: true, message: "Claude：没有填 API 密钥，点评用「复制给 Claude App」（用你的会员）" }))
         .catch((e) => (result.claude = { ok: false, message: (e as Error).message })),
     ]);
     return json(result);
@@ -181,7 +186,7 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
 
     const settings = await s.settings();
     let result;
-    if (mock) {
+    if (mockTencent) {
       result = mockAssessment(refText, evalMode, audio.byteLength);
     } else {
       const secrets = await s.secrets();
@@ -245,7 +250,7 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
     if (!(await s.takeQuota("feedback", LIMITS.feedback))) throw new AppError(429, "quota", `今天的口语点评已达上限（${LIMITS.feedback} 次）`);
     const secrets = await s.secrets();
     if (!secrets && !mock) throw new AppError(400, "not_configured", "还没有填完密钥");
-    const fb = await speakingFeedback(secrets?.anthropicKey ?? "", input, mock);
+    const fb = mock || secrets?.anthropicKey ? await speakingFeedback(secrets?.anthropicKey ?? "", input, mock) : null;
     const saved = await s.addAttempt("speak", str(body.item, 80) || null, question, {
       part,
       question,
@@ -287,6 +292,10 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
     return json(result);
   }
 
+  if (route === "GET /api/digest") {
+    return json(await s.digest(await s.today()));
+  }
+
   if (route === "GET /api/export") {
     return json(await s.exportAll());
   }
@@ -305,7 +314,10 @@ async function runDailySummary(env: Env, source: "cron" | "manual") {
   }
   const secrets = await s.secrets();
   const mock = env.MOCK === "1";
-  if (!secrets && !mock) throw new AppError(400, "not_configured", "还没有填完密钥");
+  if (!secrets?.anthropicKey && !mock) {
+    if (source === "cron") return { skipped: "no_claude_key", day };
+    throw new AppError(400, "no_claude_key", "没有填 Claude API 密钥：请用「复制给 Claude App」分析");
+  }
   const digest = await s.digest(day);
   const { summary, model } = await dailySummary(secrets?.anthropicKey ?? "", digest, mock);
   await s.saveSummary(day, summary, model, source);
