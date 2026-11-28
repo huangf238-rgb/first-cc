@@ -87,3 +87,42 @@ export async function synthesize(creds: TencentCreds, text: string, voiceType: n
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+
+// ---------- Cloudflare Workers AI ----------
+
+export const AURA_SPEAKERS = ["luna", "thalia", "helena", "apollo", "orion", "arcas"];
+
+async function toBytes(result: unknown): Promise<Uint8Array> {
+  if (result instanceof ReadableStream) return new Uint8Array(await new Response(result).arrayBuffer());
+  if (result instanceof ArrayBuffer) return new Uint8Array(result);
+  if (result instanceof Uint8Array) return result;
+  const audio = (result as any)?.audio;
+  if (typeof audio === "string") {
+    const bin = atob(audio);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  throw new AppError(502, "ai_tts_shape", "Workers AI 返回的声音格式无法识别");
+}
+
+export function audioType(b: Uint8Array): string {
+  return b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 ? "audio/wav" : "audio/mpeg";
+}
+
+/** Deepgram Aura-2 first; if that fails (e.g. the free daily allowance is used up), MeloTTS. */
+export async function synthesizeWorkersAI(ai: Ai, text: string, speaker: string): Promise<{ bytes: Uint8Array; engine: string }> {
+  try {
+    const r = await (ai as any).run("@cf/deepgram/aura-2-en", { text, speaker, encoding: "mp3" });
+    return { bytes: await toBytes(r), engine: "aura-2" };
+  } catch (e) {
+    console.error("aura_failed", String((e as Error)?.message ?? e));
+  }
+  try {
+    const r = await (ai as any).run("@cf/myshell-ai/melotts", { prompt: text, lang: "en" });
+    return { bytes: await toBytes(r), engine: "melotts" };
+  } catch (e) {
+    console.error("melotts_failed", String((e as Error)?.message ?? e));
+    throw new AppError(502, "ai_tts_failed", `Cloudflare 语音合成失败：${(e as Error)?.message ?? e}`);
+  }
+}

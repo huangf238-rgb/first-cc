@@ -11,6 +11,8 @@
   "durable_objects": {
     "bindings": [{ "name": "STORE", "class_name": "Store" }]
   },
+  // Workers AI: natural English text-to-speech (Deepgram Aura-2, with MeloTTS as backup), free daily allowance.
+  "ai": { "binding": "AI" },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
   // Daily Opus summary: 19:30 UTC = 21:30 in Cairo (winter time).
   "triggers": { "crons": ["30 19 * * *"] },

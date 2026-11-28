@@ -2,6 +2,7 @@ import type { Store } from "./store";
 
 export interface Env {
   STORE: DurableObjectNamespace<Store>;
+  AI: Ai;
   /** One-time code needed to run first setup (set with `wrangler secret put SETUP_CODE`). */
   SETUP_CODE?: string;
   /** "1" = fake Tencent and Claude replies; "tencent" = fake Tencent only. Local testing only. */

@@ -83,12 +83,16 @@ const S = {
   pass: local.get("ielts.pass", ""),
   home: null,
   view: "shadow",
-  prefs: Object.assign({ voiceA: "", voiceB: "", rate: 1, cloud: true, cloudA: 403006, cloudB: 101050 }, local.get("ielts.prefs", {})),
+  prefs: Object.assign({ voiceA: "", voiceB: "", rate: 1, cloud: true, cloudA: "aura:luna", cloudB: "aura:orion" }, local.get("ielts.prefs", {})),
   focusWords: [],
   speak: { part: "Part 1", qid: null },
   listenSetId: null,
   report: null,
 };
+
+for (const k of ["cloudA", "cloudB"]) {
+  if (typeof S.prefs[k] === "number") S.prefs[k] = k === "cloudA" ? "aura:luna" : "aura:orion";
+}
 
 function savePrefs() {
   local.set("ielts.prefs", S.prefs);
@@ -158,9 +162,15 @@ function chunkText(text) {
 }
 
 const CLOUD_VOICES = [
-  { id: 403006, name: "YunMia · 美音女声（超自然大模型）" },
-  { id: 101050, name: "WeJack · 英文男声（精品）" },
-  { id: 101051, name: "WeRose · 英文女声（精品）" },
+  { id: "aura:luna", name: "Luna · 女声（Cloudflare，免费）" },
+  { id: "aura:thalia", name: "Thalia · 女声（Cloudflare，免费）" },
+  { id: "aura:helena", name: "Helena · 女声（Cloudflare，免费）" },
+  { id: "aura:orion", name: "Orion · 男声（Cloudflare，免费）" },
+  { id: "aura:apollo", name: "Apollo · 男声（Cloudflare，免费）" },
+  { id: "aura:arcas", name: "Arcas · 男声（Cloudflare，免费）" },
+  { id: "tencent:101050", name: "WeJack · 男声（腾讯）" },
+  { id: "tencent:101051", name: "WeRose · 女声（腾讯）" },
+  { id: "tencent:403006", name: "YunMia · 女声（腾讯，需付费资源包）" },
 ];
 
 const TTS = {
@@ -239,12 +249,12 @@ const TTS = {
     const token = {};
     this.cloudToken = token;
     this.mark(btn);
-    const speed = Math.round(clamp(((S.prefs.rate || 1) * rateMul - 1) / 0.2, -2, 6) * 10) / 10;
+    const playRate = clamp((S.prefs.rate || 1) * rateMul, 0.6, 1.5);
     const load = (it) =>
       fetch("/api/tts", {
         method: "POST",
         headers: { "content-type": "application/json", "x-pass": S.pass },
-        body: JSON.stringify({ text: it.text, voice: it.voice === "B" ? S.prefs.cloudB : S.prefs.cloudA, speed }),
+        body: JSON.stringify({ text: it.text, voice: it.voice === "B" ? S.prefs.cloudB : S.prefs.cloudA }),
       }).then(async (r) => {
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
@@ -272,6 +282,7 @@ const TTS = {
         if (this.cloudToken !== token) return;
         if (i + 1 < items.length) next = load(items[i + 1]);
         player.src = url;
+        player.playbackRate = playRate;
         try {
           await player.play();
         } catch {
@@ -1533,7 +1544,7 @@ function cloudVoiceCard() {
     "div",
     { class: "seg", role: "group", "aria-label": "朗读声音来源" },
     [
-      [true, "腾讯真人感声音"],
+      [true, "AI 真人感声音"],
       [false, "手机自带声音"],
     ].map(([v, label]) => {
       const b = h("button", { type: "button", "aria-pressed": String((S.prefs.cloud !== false) === v), text: label });
@@ -1546,9 +1557,9 @@ function cloudVoiceCard() {
     }),
   );
   const sel = (key) => {
-    const el = h("select", { id: `cloud-${key}` }, CLOUD_VOICES.map((v) => h("option", { value: String(v.id), selected: Number(S.prefs[key]) === v.id, text: v.name })));
+    const el = h("select", { id: `cloud-${key}` }, CLOUD_VOICES.map((v) => h("option", { value: v.id, selected: S.prefs[key] === v.id, text: v.name })));
     el.addEventListener("change", () => {
-      S.prefs[key] = Number(el.value);
+      S.prefs[key] = el.value;
       savePrefs();
     });
     return el;
@@ -1571,7 +1582,7 @@ function cloudVoiceCard() {
     h("label", { class: "field" }, h("span", { text: "主声音（句子、考官、听力里的工作人员）" }), sel("cloudA")),
     h("label", { class: "field" }, h("span", { text: "第二个人（听力里的来电者）" }), sel("cloudB")),
     h("div", { class: "row" }, tryBtn),
-    h("p", { class: "tiny muted", text: "腾讯的声音是 AI 合成的，接近真人。需要先在腾讯云控制台开通「语音合成」。同一句话只合成一次，之后从缓存播放。如果合成失败，会自动改用手机自带声音。" }),
+    h("p", { class: "tiny muted", text: "Cloudflare 的声音（Deepgram Aura）免费，每天约 3600 个字母的额度，超出后自动换成另一个免费模型。同一句话只合成一次，之后从缓存播放。如果合成失败，会自动改用手机自带声音。" }),
   );
 }
 

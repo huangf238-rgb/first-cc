@@ -4,7 +4,7 @@ import { dailySummary, speakingFeedback, testClaude, type FeedbackInput } from "
 import { Store, addDays, dayOf } from "./store";
 import { compactResult, EVAL_MODES, mockAssessment, runSoe, type EvalModeName } from "./tencent";
 import { ASSETS } from "./assets.gen";
-import { synthesize } from "./tts";
+import { AURA_SPEAKERS, audioType, synthesize, synthesizeWorkersAI } from "./tts";
 import { AppError, type DailySummary, type Env, type WordScore } from "./types";
 
 export { Store };
@@ -299,22 +299,27 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
   if (route === "POST /api/tts") {
     const body = await readJson(req);
     const text = str(body.text, 600).replace(/\s+/g, " ");
-    const voice = Math.round(num(body.voice) ?? 0);
-    const speed = Math.max(-2, Math.min(6, Math.round((num(body.speed) ?? 0) * 10) / 10));
+    const voice = str(String(body.voice ?? ""), 40);
     if (!text || text.length > 500) throw new AppError(400, "bad_text", "每段朗读最多 500 个字符");
-    if (voice < 1 || voice > 99999999) throw new AppError(400, "bad_voice", "音色编号不对");
+    const [engine, id] = voice.includes(":") ? voice.split(":", 2) : ["tencent", voice];
+    if (engine === "aura" ? !AURA_SPEAKERS.includes(id) : !/^\d{1,8}$/.test(id)) throw new AppError(400, "bad_voice", "音色不对");
     if (mockTencent) throw new AppError(501, "tts_mock", "测试模式不合成声音");
-    const key = await sha256(`${voice}|${speed}|${text}`);
+    const key = await sha256(`${engine}|${id}|${text}`);
     let audio = await s.getTts(key);
     if (!audio) {
       if (!(await s.takeQuota("tts", LIMITS.tts))) throw new AppError(429, "quota", "今天的朗读次数已达上限");
-      const secrets = await s.secrets();
-      if (!secrets) throw new AppError(400, "not_configured", "还没有填完腾讯云密钥");
-      const bytes = await synthesize(secrets.tencent, text, voice, speed);
+      let bytes: Uint8Array;
+      if (engine === "aura") {
+        bytes = (await synthesizeWorkersAI(env.AI, text, id)).bytes;
+      } else {
+        const secrets = await s.secrets();
+        if (!secrets) throw new AppError(400, "not_configured", "还没有填完腾讯云密钥");
+        bytes = await synthesize(secrets.tencent, text, Number(id), 0);
+      }
       audio = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       await s.putTts(key, audio);
     }
-    return new Response(audio, { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=604800" } });
+    return new Response(audio, { headers: { "content-type": audioType(new Uint8Array(audio, 0, 4)), "cache-control": "private, max-age=604800" } });
   }
 
   if (route === "POST /api/import-plan") {
