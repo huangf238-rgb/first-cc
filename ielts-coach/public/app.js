@@ -83,7 +83,7 @@ const S = {
   pass: local.get("ielts.pass", ""),
   home: null,
   view: "shadow",
-  prefs: Object.assign({ voiceA: "", voiceB: "", rate: 1 }, local.get("ielts.prefs", {})),
+  prefs: Object.assign({ voiceA: "", voiceB: "", rate: 1, cloud: true, cloudA: 403006, cloudB: 101050 }, local.get("ielts.prefs", {})),
   focusWords: [],
   speak: { part: "Part 1", qid: null },
   listenSetId: null,
@@ -135,6 +135,34 @@ function bumpToday() {
 
 // ===================== text to speech (the phone's own English voices) =====================
 
+/** Splits text into pieces of at most ~450 characters at sentence ends (Tencent's limit is 500). */
+function chunkText(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (t.length <= 450) return t ? [t] : [];
+  const parts = t.match(/[^.!?]+[.!?]*\s*/g) || [t];
+  const out = [];
+  let cur = "";
+  for (const p of parts) {
+    if ((cur + p).length > 450 && cur) {
+      out.push(cur.trim());
+      cur = "";
+    }
+    cur += p;
+    while (cur.length > 450) {
+      out.push(cur.slice(0, 450));
+      cur = cur.slice(450);
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+const CLOUD_VOICES = [
+  { id: 403006, name: "YunMia · 美音女声（超自然大模型）" },
+  { id: 101050, name: "WeJack · 英文男声（精品）" },
+  { id: 101051, name: "WeRose · 英文女声（精品）" },
+];
+
 const TTS = {
   ok: typeof window.speechSynthesis !== "undefined",
   voices: [],
@@ -178,7 +206,8 @@ const TTS = {
       w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true);
       v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
       v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
-      const a = new Audio(URL.createObjectURL(new Blob([buf], { type: "audio/wav" })));
+      this.silentUrl = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+      const a = new Audio(this.silentUrl);
       a.setAttribute("playsinline", "");
       a.loop = true;
       a.volume = 0.01;
@@ -188,7 +217,81 @@ const TTS = {
       this.unlocked = false;
     }
   },
-  speak(lines, btn, rateMul = 1, plainVoice = false) {
+  /** Natural-sounding Tencent voices; falls back to the phone's own voice if anything fails. */
+  speak(lines, btn, rateMul = 1) {
+    if (btn && this.current === btn) {
+      this.stop();
+      return;
+    }
+    if (S.prefs.cloud === false || !S.pass) return this.browserSpeak(lines, btn, rateMul);
+    this.stop();
+    const list = typeof lines === "string" ? [{ text: lines }] : lines;
+    const items = list.flatMap((ln) => chunkText(ln.text).map((t) => ({ text: t, voice: ln.voice || "A" })));
+    if (!items.length) return;
+    const player = this.player || (this.player = new Audio());
+    player.setAttribute("playsinline", "");
+    // Start the element inside the tap so iOS lets it play later, after the download.
+    this.unlock();
+    if (this.silentUrl) {
+      player.src = this.silentUrl;
+      player.play().catch(() => {});
+    }
+    const token = {};
+    this.cloudToken = token;
+    this.mark(btn);
+    const speed = Math.round(clamp(((S.prefs.rate || 1) * rateMul - 1) / 0.2, -2, 6) * 10) / 10;
+    const load = (it) =>
+      fetch("/api/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-pass": S.pass },
+        body: JSON.stringify({ text: it.text, voice: it.voice === "B" ? S.prefs.cloudB : S.prefs.cloudA, speed }),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d?.error?.message || `朗读失败（${r.status}）`);
+        }
+        return URL.createObjectURL(await r.blob());
+      });
+    (async () => {
+      let next = load(items[0]);
+      for (let i = 0; i < items.length; i++) {
+        let url;
+        try {
+          url = await next;
+        } catch (e) {
+          if (this.cloudToken !== token) return;
+          this.cloudToken = null;
+          if (!this.cloudWarned) {
+            this.cloudWarned = true;
+            toast(`${e.message}。先用手机自带声音朗读。`, 6000);
+          }
+          this.mark(null);
+          this.browserSpeak(items.slice(i), btn, rateMul);
+          return;
+        }
+        if (this.cloudToken !== token) return;
+        if (i + 1 < items.length) next = load(items[i + 1]);
+        player.src = url;
+        try {
+          await player.play();
+        } catch {
+          /* ended handler below still resolves */
+        }
+        await new Promise((res) => {
+          player.onended = res;
+          player.onerror = res;
+          this.cloudStop = res;
+        });
+        URL.revokeObjectURL(url);
+        if (this.cloudToken !== token) return;
+      }
+      if (this.cloudToken === token) {
+        this.cloudToken = null;
+        this.mark(null);
+      }
+    })();
+  },
+  browserSpeak(lines, btn, rateMul = 1, plainVoice = false) {
     this.unlock();
     if (!this.ok) {
       toast("这个浏览器不能朗读，请用 Safari 打开");
@@ -225,12 +328,21 @@ const TTS = {
         if (!started && this.current === btn) {
           speechSynthesis.cancel();
           this.current = null;
-          this.speak(lines, btn, rateMul, true);
+          this.browserSpeak(lines, btn, rateMul, true);
         }
       }, 1500);
     }
   },
   stop() {
+    this.cloudToken = null;
+    if (this.player) {
+      try {
+        this.player.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (this.cloudStop) this.cloudStop();
     if (this.ok) speechSynthesis.cancel();
     this.mark(null);
   },
@@ -1416,6 +1528,53 @@ function weakWordsCard(list) {
   );
 }
 
+function cloudVoiceCard() {
+  const src = h(
+    "div",
+    { class: "seg", role: "group", "aria-label": "朗读声音来源" },
+    [
+      [true, "腾讯真人感声音"],
+      [false, "手机自带声音"],
+    ].map(([v, label]) => {
+      const b = h("button", { type: "button", "aria-pressed": String((S.prefs.cloud !== false) === v), text: label });
+      b.addEventListener("click", () => {
+        S.prefs.cloud = v;
+        savePrefs();
+        render();
+      });
+      return b;
+    }),
+  );
+  const sel = (key) => {
+    const el = h("select", { id: `cloud-${key}` }, CLOUD_VOICES.map((v) => h("option", { value: String(v.id), selected: Number(S.prefs[key]) === v.id, text: v.name })));
+    el.addEventListener("change", () => {
+      S.prefs[key] = Number(el.value);
+      savePrefs();
+    });
+    return el;
+  };
+  const tryBtn = h("button", { type: "button", class: "btn small", text: "试听" });
+  tryBtn.addEventListener("click", () =>
+    TTS.speak(
+      [
+        { text: "Good morning, Riverside Community Centre. How can I help you?", voice: "A" },
+        { text: "Hi, I'm calling about the evening photography course.", voice: "B" },
+      ],
+      tryBtn,
+    ),
+  );
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "朗读声音" }),
+    src,
+    h("label", { class: "field" }, h("span", { text: "主声音（句子、考官、听力里的工作人员）" }), sel("cloudA")),
+    h("label", { class: "field" }, h("span", { text: "第二个人（听力里的来电者）" }), sel("cloudB")),
+    h("div", { class: "row" }, tryBtn),
+    h("p", { class: "tiny muted", text: "腾讯的声音是 AI 合成的，接近真人。需要先在腾讯云控制台开通「语音合成」。同一句话只合成一次，之后从缓存播放。如果合成失败，会自动改用手机自带声音。" }),
+  );
+}
+
 function viewSettings() {
   const st = S.home?.settings || { scoreCoeff: 3, timezone: "Africa/Cairo" };
   const keys = S.home?.keys || {};
@@ -1547,7 +1706,8 @@ function viewSettings() {
     "div",
     { class: "stack", style: "gap:14px" },
     h("section", { class: "card" }, h("h2", { text: "发音评分严格度" }), strict, h("p", { class: "small muted", text: "腾讯的“苛刻指数”。标准适合大多数成人；想更快发现小问题就选严格。" })),
-    h("section", { class: "card" }, h("h2", { text: "朗读声音" }), h("label", { class: "field" }, h("span", { text: "主声音（句子、考官、听力里的工作人员）" }), voiceSel("A")), h("label", { class: "field" }, h("span", { text: "第二个人（听力里的来电者）" }), voiceSel("B")), h("div", { class: "row" }, h("label", { class: "field", style: "flex:1" }, h("span", { text: "语速" }), rate), tryA), h("p", { class: "tiny muted", text: "声音来自 iPhone 系统。想要更自然的英音，可以在「设置 › 辅助功能 › 朗读内容 › 声音 › 英语（英国）」里下载增强版声音。" })),
+    cloudVoiceCard(),
+    h("section", { class: "card" }, h("h2", { text: "手机自带声音（备用）" }), h("label", { class: "field" }, h("span", { text: "主声音（句子、考官、听力里的工作人员）" }), voiceSel("A")), h("label", { class: "field" }, h("span", { text: "第二个人（听力里的来电者）" }), voiceSel("B")), h("div", { class: "row" }, h("label", { class: "field", style: "flex:1" }, h("span", { text: "语速" }), rate), tryA), h("p", { class: "tiny muted", text: "声音来自 iPhone 系统。想要更自然的英音，可以在「设置 › 辅助功能 › 朗读内容 › 声音 › 英语（英国）」里下载增强版声音。" })),
     h("section", { class: "card" }, h("h2", { text: "时区" }), tz, h("p", { class: "tiny muted", text: "决定每天的练习从几点算起，以及晚上自动总结的日期。" })),
     h("section", { class: "card" }, h("h2", { text: "连接状态" }), h("p", { class: "small muted", text: `腾讯云 AppID ${keys.tencentAppId || "—"} · SecretId ${keys.tencentSecretId || "—"} · Claude 密钥 ${keys.anthropicKey || "—"}` }), test, testOut),
     h("section", { class: "card" }, h("h2", { text: "修改密钥或口令" }), h("p", { class: "small muted", text: "只填要改的项，其他留空。" }), f.appId, f.sid, f.skey, f.ak, f.pass, saveKeys),

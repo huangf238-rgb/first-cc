@@ -85,6 +85,7 @@ export class Store extends DurableObject<Env> {
     )`);
     this.sql.exec(`CREATE INDEX IF NOT EXISTS attempts_day ON attempts(day)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS summaries (day TEXT PRIMARY KEY, ts INTEGER NOT NULL, model TEXT, source TEXT, data TEXT NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS tts_cache (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, audio BLOB NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS quota (day TEXT NOT NULL, kind TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, kind))`);
   }
 
@@ -183,6 +184,17 @@ export class Store extends DurableObject<Env> {
     if (n >= limit) return false;
     this.sql.exec(`INSERT INTO quota (day, kind, n) VALUES (?, ?, 1) ON CONFLICT(day, kind) DO UPDATE SET n = n + 1`, day, kind);
     return true;
+  }
+
+  // ---------- synthesized speech cache ----------
+
+  getTts(k: string): ArrayBuffer | null {
+    const rows = this.sql.exec(`SELECT audio FROM tts_cache WHERE k = ?`, k).toArray();
+    return rows.length ? (rows[0].audio as ArrayBuffer) : null;
+  }
+
+  putTts(k: string, audio: ArrayBuffer): void {
+    this.sql.exec(`INSERT OR REPLACE INTO tts_cache (k, ts, audio) VALUES (?, ?, ?)`, k, Date.now(), audio);
   }
 
   // ---------- attempts ----------

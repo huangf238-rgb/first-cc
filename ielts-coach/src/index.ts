@@ -4,11 +4,12 @@ import { dailySummary, speakingFeedback, testClaude, type FeedbackInput } from "
 import { Store, addDays, dayOf } from "./store";
 import { compactResult, EVAL_MODES, mockAssessment, runSoe, type EvalModeName } from "./tencent";
 import { ASSETS } from "./assets.gen";
+import { synthesize } from "./tts";
 import { AppError, type DailySummary, type Env, type WordScore } from "./types";
 
 export { Store };
 
-const LIMITS = { assess: 600, feedback: 80, summary: 3 };
+const LIMITS = { assess: 600, feedback: 80, summary: 3, tts: 3000 };
 // 32 s of 16 kHz PCM16 (just under 1 MiB, so one recording fits in one WebSocket message);
 // the app cuts long answers into pieces of at most ~28 s.
 const MAX_AUDIO_BYTES = 32 * 32000;
@@ -295,6 +296,27 @@ async function handleApi(req: Request, env: Env, _ctx: ExecutionContext, url: UR
     return json(result);
   }
 
+  if (route === "POST /api/tts") {
+    const body = await readJson(req);
+    const text = str(body.text, 600).replace(/\s+/g, " ");
+    const voice = Math.round(num(body.voice) ?? 0);
+    const speed = Math.max(-2, Math.min(6, Math.round((num(body.speed) ?? 0) * 10) / 10));
+    if (!text || text.length > 500) throw new AppError(400, "bad_text", "每段朗读最多 500 个字符");
+    if (voice < 1 || voice > 99999999) throw new AppError(400, "bad_voice", "音色编号不对");
+    if (mockTencent) throw new AppError(501, "tts_mock", "测试模式不合成声音");
+    const key = await sha256(`${voice}|${speed}|${text}`);
+    let audio = await s.getTts(key);
+    if (!audio) {
+      if (!(await s.takeQuota("tts", LIMITS.tts))) throw new AppError(429, "quota", "今天的朗读次数已达上限");
+      const secrets = await s.secrets();
+      if (!secrets) throw new AppError(400, "not_configured", "还没有填完腾讯云密钥");
+      const bytes = await synthesize(secrets.tencent, text, voice, speed);
+      audio = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      await s.putTts(key, audio);
+    }
+    return new Response(audio, { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=604800" } });
+  }
+
   if (route === "POST /api/import-plan") {
     const body = await readJson(req);
     const summary = parsePastedPlan(str(body.text, 60000));
@@ -379,4 +401,9 @@ function parsePastedPlan(text: string): DailySummary {
     throw new AppError(400, "empty_plan", "这段数据里没有跟读句、听力或计划，请确认复制的是 Claude 的完整回答");
   }
   return summary;
+}
+
+async function sha256(s: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
 }
